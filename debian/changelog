@@ -1,3 +1,9 @@
+libosmocore (0.8.2-1) unstable; urgency=medium
+
+  * USSD witchery
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Sat, 24 Oct 2015 12:26:45 +0200
+
 libosmocore (0.8.2) unstable; urgency=medium
 
   * Add endian header
