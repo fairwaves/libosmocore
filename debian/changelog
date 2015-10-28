@@ -1,3 +1,9 @@
+libosmocore (0.8.2-2) unstable; urgency=medium
+
+  * gsm0480: RELEASE COMPLETE can be without any payload
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Wed, 28 Oct 2015 13:51:45 +0200
+
 libosmocore (0.8.2-1) unstable; urgency=medium
 
   * USSD witchery
@@ -74,7 +80,7 @@ libosmocore (0.5.3+git1-6) unstable; urgency=low
 
 libosmocore (0.5.3+git1-2) unstable; urgency=low
 
-  * New upstream version 
+  * New upstream version
 
  -- Holger Hans Peter Freyther <holger@freyther.de>  Mon, 05 Nov 2012 21:35:57 +0100
 
