@@ -202,6 +202,8 @@ static int parse_facility_ie(const uint8_t *facility_ie, uint16_t length,
 			     struct ss_request *req);
 static int parse_ss_invoke(const uint8_t *invoke_data, uint16_t length,
 					struct ss_request *req);
+static int parse_ss_return_result(const uint8_t *rr_data, uint16_t length,
+				  struct ss_request *req);
 static int parse_process_uss_req(const uint8_t *uss_req_data, uint16_t length,
 					struct ss_request *req);
 static int parse_ss_for_bs_req(const uint8_t *ss_req_data,
@@ -231,10 +233,15 @@ int gsm0480_decode_ussd_request(const struct gsm48_hdr *hdr, uint16_t len,
 		/* convert from ss_request to legacy ussd_request */
 		req->transaction_id = ss.transaction_id;
 		req->invoke_id = ss.invoke_id;
-		if (ss.ussd_text[0] == 0xFF)
+		if (ss.ussd_text_language != 0x0f ||
+			ss.opcode != GSM0480_OP_CODE_PROCESS_USS_REQ)
+
 			req->text[0] = '\0';
 		else {
-			memcpy(req->text, ss.ussd_text, sizeof(req->text));
+			gsm_7bit_decode_n_ussd(req->text,
+					       sizeof(req->text),
+					       ss.ussd_text, ss.ussd_text_len);
+
 			req->text[sizeof(req->text)-1] = '\0';
 		}
 	}
@@ -266,6 +273,7 @@ static int parse_ss(const struct gsm48_hdr *hdr, uint16_t len, struct ss_request
 	int rc = 1;
 	uint8_t msg_type = hdr->msg_type & 0xBF;  /* message-type - section 3.4 */
 
+	req->message_type = msg_type;
 	switch (msg_type) {
 	case GSM0480_MTYPE_RELEASE_COMPLETE:
 		LOGP(0, LOGL_DEBUG, "SS Release Complete\n");
@@ -350,6 +358,8 @@ static int parse_facility_ie(const uint8_t *facility_ie, uint16_t length,
 			return 0;
 		}
 
+		req->component_type = component_type;
+
 		switch (component_type) {
 		case GSM0480_CTYPE_INVOKE:
 			rc &= parse_ss_invoke(facility_ie+2,
@@ -357,10 +367,17 @@ static int parse_facility_ie(const uint8_t *facility_ie, uint16_t length,
 					      req);
 			break;
 		case GSM0480_CTYPE_RETURN_RESULT:
+			rc &= parse_ss_return_result(facility_ie+2,
+						     component_length,
+						     req);
 			break;
 		case GSM0480_CTYPE_RETURN_ERROR:
+			/* TODO Error codes */
+			LOGP(0, LOGL_DEBUG, "Ignored GSM0480_CTYPE_RETURN_ERROR");
 			break;
 		case GSM0480_CTYPE_REJECT:
+			/* TODO rejects */
+			LOGP(0, LOGL_DEBUG, "Ignored GSM0480_CTYPE_REJECT");
 			break;
 		default:
 			LOGP(0, LOGL_DEBUG, "Unknown GSM 04.80 Facility "
@@ -371,6 +388,57 @@ static int parse_facility_ie(const uint8_t *facility_ie, uint16_t length,
 		offset += (component_length+2);
 	};
 
+	return rc;
+}
+
+/* Parse an Return Result component - see table 3.4 */
+static int parse_ss_return_result(const uint8_t *rr_data, uint16_t length,
+				  struct ss_request *req)
+{
+	int rc = 1;
+	uint8_t offset;
+
+	if (length < 3)
+		return 0;
+
+	/* mandatory part */
+	if (rr_data[0] != GSM0480_COMPIDTAG_INVOKE_ID) {
+		LOGP(0, LOGL_DEBUG, "Unexpected GSM 04.80 Component-ID tag "
+		     "0x%02x (expecting Invoke ID tag)\n", rr_data[0]);
+	}
+
+	offset = rr_data[1] + 2;
+	req->invoke_id = rr_data[2];
+
+	if (offset < length) {
+		if (rr_data[offset] != GSM_0480_SEQUENCE_TAG)
+			return 0;
+		if (offset + 2 > length)
+			return 0;
+		offset += 2;
+
+		uint8_t operation_code = rr_data[offset+2];
+		req->opcode = operation_code;
+		switch (operation_code) {
+		case GSM0480_OP_CODE_USS_NOTIFY:
+		case GSM0480_OP_CODE_USS_REQUEST:
+		case GSM0480_OP_CODE_PROCESS_USS_REQ:
+			rc = parse_process_uss_req(rr_data + offset + 3,
+						   length - offset - 3,
+						   req);
+			break;
+		case GSM0480_OP_CODE_PROCESS_USS_DATA:
+			rc = parse_process_uss_data(rr_data + offset + 3,
+						    length - offset - 3,
+						    req);
+			break;
+		default:
+			LOGP(0, LOGL_DEBUG, "GSM 04.80 operation code 0x%02x "
+				"is not yet handled\n", operation_code);
+			rc = 0;
+			break;
+		}
+	}
 	return rc;
 }
 
@@ -408,6 +476,8 @@ static int parse_ss_invoke(const uint8_t *invoke_data, uint16_t length,
 		uint8_t operation_code = invoke_data[offset+2];
 		req->opcode = operation_code;
 		switch (operation_code) {
+		case GSM0480_OP_CODE_USS_NOTIFY:
+		case GSM0480_OP_CODE_USS_REQUEST:
 		case GSM0480_OP_CODE_PROCESS_USS_REQ:
 			rc = parse_process_uss_req(invoke_data + offset + 3,
 						   length - offset - 3,
@@ -436,32 +506,57 @@ static int parse_ss_invoke(const uint8_t *invoke_data, uint16_t length,
 	return rc;
 }
 
+static const uint8_t *parse_asn1_small_len(const uint8_t *codedlen, uint16_t available,
+					   uint8_t *out_len)
+{
+	uint8_t lenb = codedlen[0];
+	if (lenb < 0x80 && available > 0) {
+		*out_len = lenb;
+		return &codedlen[1];
+	} else if (lenb == 0x81 && available > 1) {
+		*out_len = codedlen[1];
+		return &codedlen[2];
+	}
+
+	return NULL;
+}
+
 /* Parse the parameters of a Process UnstructuredSS Request */
 static int parse_process_uss_req(const uint8_t *uss_req_data, uint16_t length,
 				 struct ss_request *req)
 {
 	int rc = 0;
-	int num_chars;
-	uint8_t dcs;
-
-
+	uint8_t dcs, seq_block_len, num_chars;
+	const uint8_t *next_ptr;
 	/* we need at least that much */
 	if (length < 8)
 		return 0;
 
 
 	if (uss_req_data[0] == GSM_0480_SEQUENCE_TAG) {
-		if (uss_req_data[2] == ASN1_OCTET_STRING_TAG) {
-			dcs = uss_req_data[4];
-			if ((dcs == 0x0F) &&
-			    (uss_req_data[5] == ASN1_OCTET_STRING_TAG)) {
-				num_chars = (uss_req_data[6] * 8) / 7;
+		next_ptr = parse_asn1_small_len(&uss_req_data[1], length - 1, &seq_block_len);
+		if (next_ptr == NULL || seq_block_len < 6)
+			return 0;
+
+		if (next_ptr[0] == ASN1_OCTET_STRING_TAG) {
+			if (next_ptr[1] != 1)
+				return 0;
+
+			dcs = next_ptr[2];
+
+			if (next_ptr[3] == ASN1_OCTET_STRING_TAG) {
+				next_ptr = parse_asn1_small_len(&next_ptr[4],
+								seq_block_len - 4, &num_chars);
+				if (next_ptr == NULL)
+					return 0;
+
 				/* Prevent a mobile-originated buffer-overrun! */
-				if (num_chars > MAX_LEN_USSD_STRING)
-					num_chars = MAX_LEN_USSD_STRING;
-				gsm_7bit_decode_n_ussd((char *)req->ussd_text,
-							sizeof(req->ussd_text),
-							&(uss_req_data[7]), num_chars);
+				if (num_chars > MAX_ASN1_LEN_USSD_STRING)
+					num_chars = MAX_ASN1_LEN_USSD_STRING;
+
+				req->ussd_text_language = dcs;
+				req->ussd_text_len = num_chars;
+				memcpy(req->ussd_text, next_ptr, num_chars);
 				rc = 1;
 			}
 		}
