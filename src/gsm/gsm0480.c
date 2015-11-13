@@ -206,6 +206,8 @@ static int parse_ss_return_result(const uint8_t *rr_data, uint16_t length,
 				  struct ss_request *req);
 static int parse_process_uss_req(const uint8_t *uss_req_data, uint16_t length,
 					struct ss_request *req);
+static int parse_process_uss_data(const uint8_t *uss_req_data, uint16_t length,
+					struct ss_request *req);
 static int parse_ss_for_bs_req(const uint8_t *ss_req_data,
 				     uint16_t length,
 				     struct ss_request *req);
@@ -483,6 +485,11 @@ static int parse_ss_invoke(const uint8_t *invoke_data, uint16_t length,
 						   length - offset - 3,
 						   req);
 			break;
+		case GSM0480_OP_CODE_PROCESS_USS_DATA:
+			rc = parse_process_uss_data(invoke_data + offset + 3,
+						    length - offset - 3,
+						    req);
+			break;
 		case GSM0480_OP_CODE_ACTIVATE_SS:
 		case GSM0480_OP_CODE_DEACTIVATE_SS:
 		case GSM0480_OP_CODE_INTERROGATE_SS:
@@ -504,6 +511,30 @@ static int parse_ss_invoke(const uint8_t *invoke_data, uint16_t length,
 	}
 
 	return rc;
+}
+
+static int parse_process_uss_data(const uint8_t *uss_req_data, uint16_t length,
+				  struct ss_request *req)
+{
+	uint8_t num_chars;
+
+	/* we need at least that much */
+	if (length < 3)
+		return 0;
+
+	if (uss_req_data[0] != ASN1_IA5_STRING_TAG)
+		return 0;
+
+	num_chars = uss_req_data[1];
+	if (num_chars > length - 2)
+		return 0;
+	if (num_chars > MAX_ASN1_LEN_USSD_STRING)
+		num_chars = MAX_ASN1_LEN_USSD_STRING;
+
+	req->ussd_text_language = 1;
+	req->ussd_text_len = num_chars;
+	memcpy(req->ussd_text, uss_req_data + 2, num_chars);
+	return 1;
 }
 
 static const uint8_t *parse_asn1_small_len(const uint8_t *codedlen, uint16_t available,
