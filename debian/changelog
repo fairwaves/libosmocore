@@ -1,3 +1,9 @@
+libosmocore (0.8.2-4) unstable; urgency=medium
+
+  * gsm0480: parse registerSS and eraseSS
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Thu, 20 Oct 2016 6:34:58 +0200
+
 libosmocore (0.8.2-3) unstable; urgency=medium
 
   * minor serialization changes
