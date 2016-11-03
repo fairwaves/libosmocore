@@ -1,3 +1,10 @@
+libosmocore (0.8.2-5) unstable; urgency=medium
+
+  * lapd_dl_flush_hist(): Don't flush a non-existant history
+  * lapd_core: Fix crash in lapd_dl_flush_hist()
+
+ -- Kirill Zakharenko <earwin@gmail.com>  Thu, 3 Nov 2016 20:11:58 +0530
+
 libosmocore (0.8.2-4) unstable; urgency=medium
 
   * gsm0480: parse registerSS and eraseSS
